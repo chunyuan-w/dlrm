@@ -560,6 +560,14 @@ if __name__ == "__main__":
     parser.add_argument("--lr-num-warmup-steps", type=int, default=0)
     parser.add_argument("--lr-decay-start-step", type=int, default=0)
     parser.add_argument("--lr-num-decay-steps", type=int, default=0)
+    parser.add_argument('--ipex', action='store_true', default=False,
+                        help='enable Intel_PyTorch_Extension')
+    parser.add_argument('--dnnl', action='store_true', default=False,
+                        help='enable Intel_PyTorch_Extension auto dnnl path')
+    parser.add_argument('--jit', action='store_true', default=False,
+                        help='enable Intel_PyTorch_Extension JIT path')
+    parser.add_argument('--mix-precision', action='store_true', default=False,
+                        help='enable ipex mix precision')
     args = parser.parse_args()
 
     if args.mlperf_logging:
@@ -570,6 +578,18 @@ if __name__ == "__main__":
     np.set_printoptions(precision=args.print_precision)
     torch.set_printoptions(precision=args.print_precision)
     torch.manual_seed(args.numpy_rand_seed)
+
+    if args.ipex:
+        import intel_pytorch_extension as ipex
+        if args.dnnl:
+            ipex.core.enable_auto_dnnl()
+        else:
+            ipex.core.disable_auto_dnnl()
+        if args.mix_precision:
+            ipex.core.enable_mix_bf16_fp32()
+        # jit path only enabled for inference
+        if args.jit and args.inference_only:
+            ipex.core.enable_jit_opt()
 
     if (args.test_mini_batch_size < 0):
         # if the parameter is not set, use the training batch size
@@ -585,6 +605,8 @@ if __name__ == "__main__":
         device = torch.device("cuda", 0)
         ngpus = torch.cuda.device_count()  # 1
         print("Using {} GPU(s)...".format(ngpus))
+    elif args.ipex:
+        device = 'dpcpp:0'
     else:
         device = torch.device("cpu")
         print("Using CPU...")
@@ -779,6 +801,9 @@ if __name__ == "__main__":
         if dlrm.ndevices > 1:
             dlrm.emb_l = dlrm.create_emb(m_spa, ln_emb)
 
+    if args.ipex:
+        dlrm = dlrm.to(device)
+
     # specify the loss function
     if args.loss_function == "mse":
         loss_fn = torch.nn.MSELoss(reduction="mean")
@@ -803,13 +828,15 @@ if __name__ == "__main__":
         return time.time()
 
     def dlrm_wrap(X, lS_o, lS_i, use_gpu, device):
-        if use_gpu:  # .cuda()
+        if use_gpu or args.ipex:  # .cuda()
             # lS_i can be either a list of tensors or a stacked tensor.
             # Handle each case below:
             lS_i = [S_i.to(device) for S_i in lS_i] if isinstance(lS_i, list) \
                 else lS_i.to(device)
             lS_o = [S_o.to(device) for S_o in lS_o] if isinstance(lS_o, list) \
                 else lS_o.to(device)
+            if args.ipex and args.jit:
+                return trace_model(X.to(device), lS_o, lS_i)
             return dlrm(
                 X.to(device),
                 lS_o,
@@ -820,12 +847,12 @@ if __name__ == "__main__":
 
     def loss_fn_wrap(Z, T, use_gpu, device):
         if args.loss_function == "mse" or args.loss_function == "bce":
-            if use_gpu:
+            if use_gpu or args.ipex:
                 return loss_fn(Z, T.to(device))
             else:
                 return loss_fn(Z, T)
         elif args.loss_function == "wbce":
-            if use_gpu:
+            if use_gpu or args.ipex:
                 loss_ws_ = loss_ws[T.data.view(-1).long()].view_as(T).to(device)
                 loss_fn_ = loss_fn(Z, T.to(device))
             else:
@@ -949,8 +976,15 @@ if __name__ == "__main__":
                 print(T.detach().cpu().numpy())
                 '''
 
-                # forward pass
-                Z = dlrm_wrap(X, lS_o, lS_i, use_gpu, device)
+                if args.ipex and args.jit:
+                    with torch.no_grad():
+                        if j == 0:
+                            trace_model = torch.jit.trace(dlrm.eval(), (X.to(device), lS_o.to(device), lS_i.to(device)))
+                        # forward pass
+                        Z = dlrm_wrap(X, lS_o, lS_i, use_gpu, device)
+                else:
+                    # forward pass
+                    Z = dlrm_wrap(X, lS_o, lS_i, use_gpu, device)
 
                 # loss
                 E = loss_fn_wrap(Z, T, use_gpu, device)
