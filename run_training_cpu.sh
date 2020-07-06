@@ -2,34 +2,11 @@
 
 ###############################################################################
 ### How to run?
-### Test cpu accuracy. Just run
+### Test cpu training. Just run
 ###
 ###############################################################################
 
 export DNNL_PRIMITIVE_CACHE_CAPACITY=1024
-
-ARGS=""
-if [[ "$1" == "dnnl" ]]
-then
-    ARGS="$ARGS --dnnl"
-    echo "### running auto_dnnl mode"
-fi
-
-data_type=$2
-
-echo "$data_type"
-
-if [[ "$2" == "bf16" ]]
-then
-    ARGS="$ARGS --mix-precision"
-    echo "### running bf16 datatype"
-fi
-
-if [[ "$3" == "jit" ]]
-then
-    ARGS="$ARGS --jit"
-    echo "### running jit mode"
-fi
 
 CORES=`lscpu | grep Core | awk '{print $4}'`
 SOCKETS=`lscpu | grep Socket | awk '{print $2}'`
