@@ -594,6 +594,8 @@ if __name__ == "__main__":
         # jit path only enabled for inference
         if args.jit and args.inference_only:
             ipex.core.enable_jit_opt()
+        else:
+            ipex.core.disable_jit_opt()
 
     if (args.test_mini_batch_size < 0):
         # if the parameter is not set, use the training batch size
@@ -945,8 +947,10 @@ if __name__ == "__main__":
             data = train_ld.sampler.data_source
             with torch.no_grad():
                 for j, (X, lS_o, lS_i, T) in enumerate(train_ld):
-                    traced_model = torch.jit.trace(dlrm.eval(), (X.to(device), lS_o.to(device), lS_i))
-                    #print(traced_model.graph_for(X.to(device), lS_o.to(device), lS_i))
+                    if args.ipex:
+                        traced_model = torch.jit.trace(dlrm, (X.to(device), lS_o.to(device), lS_i), check_trace=False)
+                    else:
+                        traced_model = torch.jit.trace(dlrm, (X, lS_o, lS_i), check_trace=False)
                     break
                 bench = ThroughputBenchmark(traced_model)
                 j = 0
