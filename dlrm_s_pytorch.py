@@ -946,7 +946,13 @@ if __name__ == "__main__":
         if args.share_weight:
             data = train_ld.sampler.data_source
             with torch.no_grad():
-                bench = ThroughputBenchmark(dlrm)
+                for j, (X, lS_o, lS_i, T) in enumerate(train_ld):
+                    if args.ipex:
+                        traced_model = torch.jit.trace(dlrm, (X.to(device), lS_o.to(device), lS_i), check_trace=False)
+                    else:
+                        traced_model = torch.jit.trace(dlrm, (X, lS_o, lS_i), check_trace=False)
+                    break
+                bench = ThroughputBenchmark(traced_model)
                 j = 0
                 for j, (X, lS_o, lS_i, T) in enumerate(train_ld):
                     bench.add_input(X.to(device), lS_o.to(device), lS_i)
