@@ -809,6 +809,7 @@ if __name__ == "__main__":
 
     if args.ipex:
         dlrm = dlrm.to(device)
+        print(dlrm)
 
     # specify the loss function
     if args.loss_function == "mse":
@@ -948,14 +949,25 @@ if __name__ == "__main__":
             with torch.no_grad():
                 for j, (X, lS_o, lS_i, T) in enumerate(train_ld):
                     if args.ipex:
-                        traced_model = torch.jit.trace(dlrm, (X.to(device), lS_o.to(device), lS_i), check_trace=False)
+                        lS_i = [S_i.to(device) for S_i in lS_i] if isinstance(lS_i, list) \
+                            else lS_i.to(device)
+                        lS_o = [S_o.to(device) for S_o in lS_o] if isinstance(lS_o, list) \
+                            else lS_o.to(device)
+                        traced_model = torch.jit.trace(dlrm, (X.to(device), lS_o, lS_i), check_trace=False)
                     else:
                         traced_model = torch.jit.trace(dlrm, (X, lS_o, lS_i), check_trace=False)
                     break
                 bench = ThroughputBenchmark(traced_model)
                 j = 0
                 for j, (X, lS_o, lS_i, T) in enumerate(train_ld):
-                    bench.add_input(X.to(device), lS_o.to(device), lS_i)
+                    if args.ipex:
+                        lS_i = [S_i.to(device) for S_i in lS_i] if isinstance(lS_i, list) \
+                            else lS_i.to(device)
+                        lS_o = [S_o.to(device) for S_o in lS_o] if isinstance(lS_o, list) \
+                            else lS_o.to(device)
+                        bench.add_input(X.to(device), lS_o, lS_i)
+                    else:
+                        bench.add_input(X, lS_o, lS_i)
                 stats = bench.benchmark(
                     num_calling_threads=args.num_instance,
                     num_warmup_iters=100,
@@ -1005,7 +1017,11 @@ if __name__ == "__main__":
                     if args.ipex and args.jit:
                         with torch.no_grad():
                             if j == 0:
-                                trace_model = torch.jit.trace(dlrm.eval(), (X.to(device), lS_o.to(device), lS_i.to(device)))
+                                lS_i = [S_i.to(device) for S_i in lS_i] if isinstance(lS_i, list) \
+                                    else lS_i.to(device)
+                                lS_o = [S_o.to(device) for S_o in lS_o] if isinstance(lS_o, list) \
+                                    else lS_o.to(device)
+                                trace_model = torch.jit.trace(dlrm.eval(), (X.to(device), lS_o, lS_i))
                             # forward pass
                             Z = dlrm_wrap(X, lS_o, lS_i, use_gpu, device)
                     else:
