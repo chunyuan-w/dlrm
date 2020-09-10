@@ -590,7 +590,7 @@ if __name__ == "__main__":
         else:
             ipex.core.disable_auto_dnnl()
         if args.mix_precision:
-            ipex.core.enable_mix_bf16_fp32()
+            ipex.enable_auto_optimization(mixed_dtype=torch.bfloat16, train=not args.inference_only)
         # jit path only enabled for inference
         if args.jit and args.inference_only:
             ipex.core.enable_jit_opt()
