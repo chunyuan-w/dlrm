@@ -193,19 +193,22 @@ class DLRM_Net(nn.Module):
                 EE.embs.weight.data = torch.tensor(W, requires_grad=True)
 
             else:
+                print("create emb", i)
                 EE = nn.EmbeddingBag(n, m, mode="sum", sparse=True)
-
-                # initialize embeddings
-                # nn.init.uniform_(EE.weight, a=-np.sqrt(1 / n), b=np.sqrt(1 / n))
-                W = np.random.uniform(
-                    low=-np.sqrt(1 / n), high=np.sqrt(1 / n), size=(n, m)
-                ).astype(np.float32)
-                # approach 1
-                EE.weight.data = torch.tensor(W, requires_grad=True)
-                # approach 2
-                # EE.weight.data.copy_(torch.tensor(W))
-                # approach 3
-                # EE.weight = Parameter(torch.tensor(W),requires_grad=True)
+                if args.load_model == "":
+                    # initialize embeddings
+                    # nn.init.uniform_(EE.weight, a=-np.sqrt(1 / n), b=np.sqrt(1 / n))
+                    W = np.random.uniform(
+                        low=-np.sqrt(1 / n), high=np.sqrt(1 / n), size=(n, m)
+                    ).astype(np.float32)
+                    # approach 1
+                    EE.weight.data = torch.tensor(W, requires_grad=True)
+                    # approach 2
+                    # EE.weight.data.copy_(torch.tensor(W))
+                    # approach 3
+                    # EE.weight = Parameter(torch.tensor(W),requires_grad=True)
+                else:
+                    del(EE.weight)
 
             emb_l.append(EE)
 
@@ -473,6 +476,17 @@ class DLRM_Net(nn.Module):
 
         return z0
 
+    def load_state_dict(self, state_dict):
+        for i in range(len(self.top_l)):
+            if hasattr(self.top_l[i], 'weight'):
+                self.top_l[i].weight = torch.nn.Parameter(state_dict["top_l.%d.weight" % i])
+                self.top_l[i].bias = torch.nn.Parameter(state_dict["top_l.%d.bias" % i])
+        for i in range(len(self.bot_l)):
+            if hasattr(self.bot_l[i], 'weight'):
+                self.bot_l[i].weight = torch.nn.Parameter(state_dict["bot_l.%d.weight" % i])
+                self.bot_l[i].bias = torch.nn.Parameter(state_dict["bot_l.%d.bias" % i])
+        for i in range(len(self.emb_l)):
+            dlrm.emb_l[i].weight = torch.nn.Parameter(ld_model["state_dict"]["emb_l.%d.weight" % i])
 
 if __name__ == "__main__":
     ### import packages ###
@@ -536,6 +550,7 @@ if __name__ == "__main__":
     parser.add_argument("--sync-dense-params", type=bool, default=True)
     # inference
     parser.add_argument("--inference-only", action="store_true", default=False)
+    parser.add_argument("--verify-auc-only", action="store_true", default=False)
     # onnx
     parser.add_argument("--save-onnx", action="store_true", default=False)
     # gpu
@@ -564,14 +579,21 @@ if __name__ == "__main__":
     parser.add_argument("--lr-num-warmup-steps", type=int, default=0)
     parser.add_argument("--lr-decay-start-step", type=int, default=0)
     parser.add_argument("--lr-num-decay-steps", type=int, default=0)
+    # ipex
     parser.add_argument('--ipex', action='store_true', default=False,
                         help='enable Intel_PyTorch_Extension')
     parser.add_argument('--dnnl', action='store_true', default=False,
                         help='enable Intel_PyTorch_Extension auto dnnl path')
     parser.add_argument('--jit', action='store_true', default=False,
                         help='enable Intel_PyTorch_Extension JIT path')
-    parser.add_argument('--mix-precision', action='store_true', default=False,
+    parser.add_argument('--bf16', action='store_true', default=False,
                         help='enable ipex mix precision')
+    parser.add_argument('--int8', action='store_true', default=False,
+                        help='enable ipex mix precision')
+    parser.add_argument('--int8-calibration', action='store_true', default=False,
+                        help='enable ipex mix precision')
+    parser.add_argument('--int8-configuration-dir', default='int8_configure.json', type=str, metavar='PATH',
+                       help = 'path to int8 configures, default file name is configure.json')
     args = parser.parse_args()
 
     if args.mlperf_logging:
@@ -589,8 +611,15 @@ if __name__ == "__main__":
             ipex.core.enable_auto_dnnl()
         else:
             ipex.core.disable_auto_dnnl()
-        if args.mix_precision:
-            ipex.enable_auto_optimization(mixed_dtype=torch.bfloat16, train=not args.inference_only)
+        if args.bf16:
+            ipex_conf = ipex.AmpConf(torch.bfloat16, training=not args.inference_only)
+        elif args.int8:
+            import os
+            if os.path.exists(args.int8_configuration_dir) and os.stat(args.int8_configuration_dir).st_size != 0:
+                ipex_conf = ipex.AmpConf(torch.int8, args.int8_configuration_dir)
+        else:
+            ipex_conf = None
+
         # jit path only enabled for inference
         if args.jit and args.inference_only:
             ipex.core.enable_jit_opt()
@@ -612,7 +641,7 @@ if __name__ == "__main__":
         ngpus = torch.cuda.device_count()  # 1
         print("Using {} GPU(s)...".format(ngpus))
     elif args.ipex:
-        device = 'dpcpp:0'
+        device = ipex.DEVICE
     else:
         device = torch.device("cpu")
         print("Using CPU...")
@@ -834,23 +863,14 @@ if __name__ == "__main__":
             torch.cuda.synchronize()
         return time.time()
 
-    def dlrm_wrap(X, lS_o, lS_i, use_gpu, device):
-        if use_gpu or args.ipex:  # .cuda()
-            # lS_i can be either a list of tensors or a stacked tensor.
-            # Handle each case below:
+    def input_wrap(X, lS_o, lS_i, use_gpu, device):
+        if use_gpu or args.ipex:
             lS_i = [S_i.to(device) for S_i in lS_i] if isinstance(lS_i, list) \
                 else lS_i.to(device)
             lS_o = [S_o.to(device) for S_o in lS_o] if isinstance(lS_o, list) \
                 else lS_o.to(device)
-            if args.ipex and args.jit:
-                return trace_model(X.to(device), lS_o, lS_i)
-            return dlrm(
-                X.to(device),
-                lS_o,
-                lS_i
-            )
-        else:
-            return dlrm(X, lS_o, lS_i)
+            X = X.to(device)
+        return X, lS_o, lS_i
 
     def loss_fn_wrap(Z, T, use_gpu, device):
         if args.loss_function == "mse" or args.loss_function == "bce":
@@ -871,6 +891,29 @@ if __name__ == "__main__":
             # print(loss_fn_)
             return loss_sc_.mean()
 
+    def run_throughtput_benchmark(model, data_loader):
+        bench = ThroughputBenchmark(model)
+        j = 0
+        for j, (X, lS_o, lS_i, T) in enumerate(data_loader):
+            bench.add_input(*input_wrap(X, lS_o, lS_i, use_gpu, device))
+            if j == 1000: 
+                break
+        stats = bench.benchmark(
+            num_calling_threads=args.num_instance,
+            num_warmup_iters=100,
+            num_iters=1000 * args.num_instance,
+        )
+        print(stats)
+
+    def int8_calibration(model, data_loader, num_calib_batches):
+        conf = ipex.AmpConf(torch.int8)
+        with torch.no_grad():
+            with ipex.AutoMixPrecision(conf, running_mode="calibration"):
+                for j, (X, lS_o, lS_i, T) in enumerate(data_loader):
+                    model(X, lS_o, lS_i)
+                    if j == num_calib_batches:
+                        conf.save(args.int8_configuration_dir)
+                        return
     # training or inference
     best_gA_test = 0
     best_auc_test = 0
@@ -916,6 +959,7 @@ if __name__ == "__main__":
         ld_gA_test = ld_model["test_acc"]
         ld_gL_test = ld_model["test_loss"]
         if not args.inference_only:
+            optimizer = torch.optim.SGD(dlrm.parameters(), lr=args.learning_rate)
             optimizer.load_state_dict(ld_model["opt_state_dict"])
             best_gA_test = ld_gA_test
             total_loss = ld_total_loss
@@ -942,343 +986,331 @@ if __name__ == "__main__":
             )
         )
 
+    if args.inference_only:
+        torch.set_grad_enabled(False)  
+
+    if args.jit:
+        for j, (X, lS_o, lS_i, T) in enumerate(train_ld):
+            dlrm = torch.jit.trace(dlrm, input_wrap(X, lS_o, lS_i, use_gpu, device), check_trace=False)
+            break
+
+    if args.int8_calibration:
+        assert args.int8 and args.inference_only, "int8 type only support inference, only using int8 type needs to int8_calibration"
+        int8_calibration(dlrm, test_ld, num_calib_batches=8)
+        print("do int8 calibration done")
+        ipex_conf = ipex.AmpConf(torch.int8, args.int8_configuration_dir)
+
     print("time/loss/accuracy (if enabled):")
-    with torch.autograd.profiler.profile(args.enable_profiling, use_gpu) as prof:
-        if args.share_weight:
-            data = train_ld.sampler.data_source
-            with torch.no_grad():
-                for j, (X, lS_o, lS_i, T) in enumerate(train_ld):
-                    if args.ipex:
-                        lS_i = [S_i.to(device) for S_i in lS_i] if isinstance(lS_i, list) \
-                            else lS_i.to(device)
-                        lS_o = [S_o.to(device) for S_o in lS_o] if isinstance(lS_o, list) \
-                            else lS_o.to(device)
-                        traced_model = torch.jit.trace(dlrm, (X.to(device), lS_o, lS_i), check_trace=False)
-                    else:
-                        traced_model = torch.jit.trace(dlrm, (X, lS_o, lS_i), check_trace=False)
-                    break
-                bench = ThroughputBenchmark(traced_model)
-                j = 0
-                for j, (X, lS_o, lS_i, T) in enumerate(train_ld):
-                    if args.ipex:
-                        lS_i = [S_i.to(device) for S_i in lS_i] if isinstance(lS_i, list) \
-                            else lS_i.to(device)
-                        lS_o = [S_o.to(device) for S_o in lS_o] if isinstance(lS_o, list) \
-                            else lS_o.to(device)
-                        bench.add_input(X.to(device), lS_o, lS_i)
-                    else:
-                        bench.add_input(X, lS_o, lS_i)
-                stats = bench.benchmark(
-                    num_calling_threads=args.num_instance,
-                    num_warmup_iters=100,
-                    num_iters=900 * args.num_instance,
-                )
-                print(stats)
+    if args.share_weight:
+        assert args.inference_only
+        if args.ipex:
+            with ipex.AutoMixPrecision(ipex_conf):
+                run_throughtput_benchmark(dlrm, train_ld)
         else:
-            while k < args.nepochs:
-                if k < skip_upto_epoch:
+            run_throughtput_benchmark(dlrm, train_ld)
+        sys.exit()
+
+    with torch.autograd.profiler.profile(args.enable_profiling, use_gpu) as prof:
+        while k < args.nepochs:
+            if k < skip_upto_epoch:
+                continue
+
+            accum_time_begin = time_wrap(use_gpu)
+
+            if args.mlperf_logging:
+                previous_iteration_time = None
+
+            for j, (X, lS_o, lS_i, T) in enumerate(train_ld):
+                if j == 0 and args.save_onnx:
+                    (X_onnx, lS_o_onnx, lS_i_onnx) = (X, lS_o, lS_i)
+
+                if j < skip_upto_batch:
                     continue
-    
-                accum_time_begin = time_wrap(use_gpu)
-    
+
                 if args.mlperf_logging:
-                    previous_iteration_time = None
-    
-                for j, (X, lS_o, lS_i, T) in enumerate(train_ld):
-                    if j == 0 and args.save_onnx:
-                        (X_onnx, lS_o_onnx, lS_i_onnx) = (X, lS_o, lS_i)
-    
-                    if j < skip_upto_batch:
-                        continue
-    
-                    if args.mlperf_logging:
-                        current_time = time_wrap(use_gpu)
-                        if previous_iteration_time:
-                            iteration_time = current_time - previous_iteration_time
-                        else:
-                            iteration_time = 0
-                        previous_iteration_time = current_time
+                    current_time = time_wrap(use_gpu)
+                    if previous_iteration_time:
+                        iteration_time = current_time - previous_iteration_time
                     else:
-                        t1 = time_wrap(use_gpu)
-    
-                    # early exit if nbatches was set by the user and has been exceeded
-                    if nbatches > 0 and j >= nbatches:
-                        break
-                    '''
-                    # debug prints
-                    print("input and targets")
-                    print(X.detach().cpu().numpy())
-                    print([np.diff(S_o.detach().cpu().tolist()
-                           + list(lS_i[i].shape)).tolist() for i, S_o in enumerate(lS_o)])
-                    print([S_i.detach().cpu().numpy().tolist() for S_i in lS_i])
-                    print(T.detach().cpu().numpy())
-                    '''
-    
-                    if args.ipex and args.jit:
-                        with torch.no_grad():
-                            if j == 0:
-                                lS_i = [S_i.to(device) for S_i in lS_i] if isinstance(lS_i, list) \
-                                    else lS_i.to(device)
-                                lS_o = [S_o.to(device) for S_o in lS_o] if isinstance(lS_o, list) \
-                                    else lS_o.to(device)
-                                trace_model = torch.jit.trace(dlrm.eval(), (X.to(device), lS_o, lS_i))
-                            # forward pass
-                            Z = dlrm_wrap(X, lS_o, lS_i, use_gpu, device)
-                    else:
-                        # forward pass
-                        Z = dlrm_wrap(X, lS_o, lS_i, use_gpu, device)
-    
-                    # loss
-                    E = loss_fn_wrap(Z, T, use_gpu, device)
-                    '''
-                    # debug prints
-                    print("output and loss")
-                    print(Z.detach().cpu().numpy())
-                    print(E.detach().cpu().numpy())
-                    '''
-                    # compute loss and accuracy
-                    L = E.detach().cpu().numpy()  # numpy array
-                    S = Z.detach().cpu().numpy()  # numpy array
-                    T = T.detach().cpu().numpy()  # numpy array
-                    mbs = T.shape[0]  # = args.mini_batch_size except maybe for last
-                    A = np.sum((np.round(S, 0) == T).astype(np.uint8))
-    
-                    if not args.inference_only:
-                        # scaled error gradient propagation
-                        # (where we do not accumulate gradients across mini-batches)
-                        optimizer.zero_grad()
-                        # backward pass
-                        E.backward()
-                        # debug prints (check gradient norm)
-                        # for l in mlp.layers:
-                        #     if hasattr(l, 'weight'):
-                        #          print(l.weight.grad.norm().item())
-    
-                        # optimizer
-                        optimizer.step()
-                        lr_scheduler.step()
-    
-                    if args.mlperf_logging:
-                        total_time += iteration_time
-                    else:
-                        t2 = time_wrap(use_gpu)
-                        total_time += t2 - t1
-                    total_accu += A
-                    total_loss += L * mbs
-                    total_iter += 1
-                    total_samp += mbs
-    
-                    should_print = ((j + 1) % args.print_freq == 0) or (j + 1 == nbatches)
-                    should_test = (
-                        (args.test_freq > 0)
-                        and (args.data_generation == "dataset")
-                        and (((j + 1) % args.test_freq == 0) or (j + 1 == nbatches))
-                    )
-    
-                    # print time, loss and accuracy
-                    if should_print or should_test:
-                        gT = 1000.0 * total_time / total_iter if args.print_time else -1
-                        total_time = 0
-    
-                        gA = total_accu / total_samp
-                        total_accu = 0
-    
-                        gL = total_loss / total_samp
-                        total_loss = 0
-    
-                        str_run_type = "inference" if args.inference_only else "training"
-                        print(
-                            "Finished {} it {}/{} of epoch {}, {:.2f} ms/it, ".format(
-                                str_run_type, j + 1, nbatches, k, gT
-                            )
-                            + "loss {:.6f}, accuracy {:3.3f} %".format(gL, gA * 100)
+                        iteration_time = 0
+                    previous_iteration_time = current_time
+                else:
+                    t1 = time_wrap(use_gpu)
+
+                # early exit if nbatches was set by the user and has been exceeded
+                if nbatches > 0 and j >= nbatches:
+                    break
+                '''
+                # debug prints
+                print("input and targets")
+                print(X.detach().cpu().numpy())
+                print([np.diff(S_o.detach().cpu().tolist()
+                        + list(lS_i[i].shape)).tolist() for i, S_o in enumerate(lS_o)])
+                print([S_i.detach().cpu().numpy().tolist() for S_i in lS_i])
+                print(T.detach().cpu().numpy())
+                '''
+
+                # forward pass
+                Z = dlrm(*input_wrap(X, lS_o, lS_i, use_gpu, device))
+
+                # loss
+                E = loss_fn_wrap(Z, T, use_gpu, device)
+                '''
+                # debug prints
+                print("output and loss")
+                print(Z.detach().cpu().numpy())
+                print(E.detach().cpu().numpy())
+                '''
+                # compute loss and accuracy
+                L = E.detach().cpu().numpy()  # numpy array
+                S = Z.detach().cpu().numpy()  # numpy array
+                T = T.detach().cpu().numpy()  # numpy array
+                mbs = T.shape[0]  # = args.mini_batch_size except maybe for last
+                A = np.sum((np.round(S, 0) == T).astype(np.uint8))
+
+                if not args.inference_only:
+                    # scaled error gradient propagation
+                    # (where we do not accumulate gradients across mini-batches)
+                    optimizer.zero_grad()
+                    # backward pass
+                    E.backward()
+                    # debug prints (check gradient norm)
+                    # for l in mlp.layers:
+                    #     if hasattr(l, 'weight'):
+                    #          print(l.weight.grad.norm().item())
+
+                    # optimizer
+                    optimizer.step()
+                    lr_scheduler.step()
+
+                if args.mlperf_logging:
+                    total_time += iteration_time
+                else:
+                    t2 = time_wrap(use_gpu)
+                    total_time += t2 - t1
+                total_accu += A
+                total_loss += L * mbs
+                total_iter += 1
+                total_samp += mbs
+
+                should_print = ((j + 1) % args.print_freq == 0) or (j + 1 == nbatches)
+                should_test = (
+                    (args.test_freq > 0)
+                    and (args.data_generation == "dataset")
+                    and (((j + 1) % args.test_freq == 0) or (j + 1 == nbatches))
+                )
+
+                # print time, loss and accuracy
+                if should_print or should_test:
+                    gT = 1000.0 * total_time / total_iter if args.print_time else -1
+                    total_time = 0
+
+                    gA = total_accu / total_samp
+                    total_accu = 0
+
+                    gL = total_loss / total_samp
+                    total_loss = 0
+
+                    str_run_type = "inference" if args.inference_only else "training"
+                    print(
+                        "Finished {} it {}/{} of epoch {}, {:.2f} ms/it, ".format(
+                            str_run_type, j + 1, nbatches, k, gT
                         )
-                        # Uncomment the line below to print out the total time with overhead
-                        # print("Accumulated time so far: {}" \
-                        # .format(time_wrap(use_gpu) - accum_time_begin))
-                        total_iter = 0
-                        total_samp = 0
-    
-                    # testing
-                    if should_test and not args.inference_only:
-                        # don't measure training iter time in a test iteration
-                        if args.mlperf_logging:
-                            previous_iteration_time = None
-    
-                        test_accu = 0
-                        test_loss = 0
-                        test_samp = 0
-    
-                        accum_test_time_begin = time_wrap(use_gpu)
-                        if args.mlperf_logging:
-                            scores = []
-                            targets = []
-    
-                        for i, (X_test, lS_o_test, lS_i_test, T_test) in enumerate(test_ld):
-                            # early exit if nbatches was set by the user and was exceeded
-                            if nbatches > 0 and i >= nbatches:
-                                break
-    
-                            t1_test = time_wrap(use_gpu)
-    
-                            # forward pass
-                            Z_test = dlrm_wrap(
-                                X_test, lS_o_test, lS_i_test, use_gpu, device
-                            )
-                            if args.mlperf_logging:
-                                S_test = Z_test.detach().cpu().numpy()  # numpy array
-                                T_test = T_test.detach().cpu().numpy()  # numpy array
-                                scores.append(S_test)
-                                targets.append(T_test)
-                            else:
-                                # loss
-                                E_test = loss_fn_wrap(Z_test, T_test, use_gpu, device)
-    
-                                # compute loss and accuracy
-                                L_test = E_test.detach().cpu().numpy()  # numpy array
-                                S_test = Z_test.detach().cpu().numpy()  # numpy array
-                                T_test = T_test.detach().cpu().numpy()  # numpy array
-                                mbs_test = T_test.shape[0]  # = mini_batch_size except last
-                                A_test = np.sum((np.round(S_test, 0) == T_test).astype(np.uint8))
-                                test_accu += A_test
-                                test_loss += L_test * mbs_test
-                                test_samp += mbs_test
-    
-                            t2_test = time_wrap(use_gpu)
-    
-                        if args.mlperf_logging:
-                            scores = np.concatenate(scores, axis=0)
-                            targets = np.concatenate(targets, axis=0)
-    
-                            metrics = {
-                                'loss' : sklearn.metrics.log_loss,
-                                'recall' : lambda y_true, y_score:
-                                sklearn.metrics.recall_score(
-                                    y_true=y_true,
-                                    y_pred=np.round(y_score)
-                                ),
-                                'precision' : lambda y_true, y_score:
-                                sklearn.metrics.precision_score(
-                                    y_true=y_true,
-                                    y_pred=np.round(y_score)
-                                ),
-                                'f1' : lambda y_true, y_score:
-                                sklearn.metrics.f1_score(
-                                    y_true=y_true,
-                                    y_pred=np.round(y_score)
-                                ),
-                                'ap' : sklearn.metrics.average_precision_score,
-                                'roc_auc' : sklearn.metrics.roc_auc_score,
-                                'accuracy' : lambda y_true, y_score:
-                                sklearn.metrics.accuracy_score(
-                                    y_true=y_true,
-                                    y_pred=np.round(y_score)
-                                ),
-                                # 'pre_curve' : sklearn.metrics.precision_recall_curve,
-                                # 'roc_curve' :  sklearn.metrics.roc_curve,
-                            }
-    
-                            # print("Compute time for validation metric : ", end="")
-                            # first_it = True
-                            validation_results = {}
-                            for metric_name, metric_function in metrics.items():
-                                # if first_it:
-                                #     first_it = False
-                                # else:
-                                #     print(", ", end="")
-                                # metric_compute_start = time_wrap(False)
-                                validation_results[metric_name] = metric_function(
-                                    targets,
-                                    scores
-                                )
-                                # metric_compute_end = time_wrap(False)
-                                # met_time = metric_compute_end - metric_compute_start
-                                # print("{} {:.4f}".format(metric_name, 1000 * (met_time)),
-                                #      end="")
-                            # print(" ms")
-                            gA_test = validation_results['accuracy']
-                            gL_test = validation_results['loss']
+                        + "loss {:.6f}, accuracy {:3.3f} %".format(gL, gA * 100)
+                    )
+                    # Uncomment the line below to print out the total time with overhead
+                    # print("Accumulated time so far: {}" \
+                    # .format(time_wrap(use_gpu) - accum_time_begin))
+                    total_iter = 0
+                    total_samp = 0
+
+                # testing
+                if args.verify_auc_only or should_test and not args.inference_only:
+                    # don't measure training iter time in a test iteration
+                    if args.mlperf_logging:
+                        previous_iteration_time = None
+
+                    test_accu = 0
+                    test_loss = 0
+                    test_samp = 0
+
+                    accum_test_time_begin = time_wrap(use_gpu)
+                    if args.mlperf_logging:
+                        scores = []
+                        targets = []
+
+                    for i, (X_test, lS_o_test, lS_i_test, T_test) in enumerate(test_ld):
+                        # early exit if nbatches was set by the user and was exceeded
+                        if nbatches > 0 and i >= nbatches:
+                            break
+
+                        if i < 8 and args.int8:
+                            continue
+
+                        t1_test = time_wrap(use_gpu)
+
+                        # forward pass
+                        if args.ipex:
+                            with ipex.AutoMixPrecision(ipex_conf):
+                                Z_test = dlrm(*input_wrap(X_test, lS_o_test, lS_i_test, use_gpu, device))
                         else:
-                            gA_test = test_accu / test_samp
-                            gL_test = test_loss / test_samp
-    
-                        is_best = gA_test > best_gA_test
+                            Z_test = dlrm(*input_wrap(X_test, lS_o_test, lS_i_test, use_gpu, device))
+
+                        if args.mlperf_logging:
+                            S_test = Z_test.detach().cpu().numpy()  # numpy array
+                            T_test = T_test.detach().cpu().numpy()  # numpy array
+                            scores.append(S_test)
+                            targets.append(T_test)
+                        else:
+                            # loss
+                            E_test = loss_fn_wrap(Z_test, T_test, use_gpu, device)
+
+                            # compute loss and accuracy
+                            L_test = E_test.detach().cpu().numpy()  # numpy array
+                            S_test = Z_test.detach().cpu().numpy()  # numpy array
+                            T_test = T_test.detach().cpu().numpy()  # numpy array
+                            mbs_test = T_test.shape[0]  # = mini_batch_size except last
+                            A_test = np.sum((np.round(S_test, 0) == T_test).astype(np.uint8))
+                            test_accu += A_test
+                            test_loss += L_test * mbs_test
+                            test_samp += mbs_test
+
+                        t2_test = time_wrap(use_gpu)
+
+                    if args.mlperf_logging:
+                        scores = np.concatenate(scores, axis=0)
+                        targets = np.concatenate(targets, axis=0)
+                        metrics = {
+                            'loss' : sklearn.metrics.log_loss,
+                            'recall' : lambda y_true, y_score:
+                            sklearn.metrics.recall_score(
+                                y_true=y_true,
+                                y_pred=np.round(y_score)
+                            ),
+                            'precision' : lambda y_true, y_score:
+                            sklearn.metrics.precision_score(
+                                y_true=y_true,
+                                y_pred=np.round(y_score)
+                            ),
+                            'f1' : lambda y_true, y_score:
+                            sklearn.metrics.f1_score(
+                                y_true=y_true,
+                                y_pred=np.round(y_score)
+                            ),
+                            'ap' : sklearn.metrics.average_precision_score,
+                            'roc_auc' : sklearn.metrics.roc_auc_score,
+                            'accuracy' : lambda y_true, y_score:
+                            sklearn.metrics.accuracy_score(
+                                y_true=y_true,
+                                y_pred=np.round(y_score)
+                            ),
+                            # 'pre_curve' : sklearn.metrics.precision_recall_curve,
+                            # 'roc_curve' :  sklearn.metrics.roc_curve,
+                        }
+
+                        # print("Compute time for validation metric : ", end="")
+                        # first_it = True
+                        validation_results = {}
+                        for metric_name, metric_function in metrics.items():
+                            # if first_it:
+                            #     first_it = False
+                            # else:
+                            #     print(", ", end="")
+                            # metric_compute_start = time_wrap(False)
+                            validation_results[metric_name] = metric_function(
+                                targets,
+                                scores
+                            )
+                            # metric_compute_end = time_wrap(False)
+                            # met_time = metric_compute_end - metric_compute_start
+                            # print("{} {:.4f}".format(metric_name, 1000 * (met_time)),
+                            #      end="")
+                        # print(" ms")
+                        gA_test = validation_results['accuracy']
+                        gL_test = validation_results['loss']
+                    else:
+                        gA_test = test_accu / test_samp
+                        gL_test = test_loss / test_samp
+
+                    is_best = gA_test > best_gA_test
+                    if is_best:
+                        best_gA_test = gA_test
+                        if not (args.save_model == ""):
+                            print("Saving model to {}".format(args.save_model))
+                            torch.save(
+                                {
+                                    "epoch": k,
+                                    "nepochs": args.nepochs,
+                                    "nbatches": nbatches,
+                                    "nbatches_test": nbatches_test,
+                                    "iter": j + 1,
+                                    "state_dict": dlrm.state_dict(),
+                                    "train_acc": gA,
+                                    "train_loss": gL,
+                                    "test_acc": gA_test,
+                                    "test_loss": gL_test,
+                                    "total_loss": total_loss,
+                                    "total_accu": total_accu,
+                                    "opt_state_dict": optimizer.state_dict(),
+                                },
+                                args.save_model,
+                            )
+
+                    if args.mlperf_logging:
+                        is_best = validation_results['roc_auc'] > best_auc_test
                         if is_best:
-                            best_gA_test = gA_test
-                            if not (args.save_model == ""):
-                                print("Saving model to {}".format(args.save_model))
-                                torch.save(
-                                    {
-                                        "epoch": k,
-                                        "nepochs": args.nepochs,
-                                        "nbatches": nbatches,
-                                        "nbatches_test": nbatches_test,
-                                        "iter": j + 1,
-                                        "state_dict": dlrm.state_dict(),
-                                        "train_acc": gA,
-                                        "train_loss": gL,
-                                        "test_acc": gA_test,
-                                        "test_loss": gL_test,
-                                        "total_loss": total_loss,
-                                        "total_accu": total_accu,
-                                        "opt_state_dict": optimizer.state_dict(),
-                                    },
-                                    args.save_model,
-                                )
-    
-                        if args.mlperf_logging:
-                            is_best = validation_results['roc_auc'] > best_auc_test
-                            if is_best:
-                                best_auc_test = validation_results['roc_auc']
-    
-                            print(
-                                "Testing at - {}/{} of epoch {},".format(j + 1, nbatches, k)
-                                + " loss {:.6f}, recall {:.4f}, precision {:.4f},".format(
-                                    validation_results['loss'],
-                                    validation_results['recall'],
-                                    validation_results['precision']
-                                )
-                                + " f1 {:.4f}, ap {:.4f},".format(
-                                    validation_results['f1'],
-                                    validation_results['ap'],
-                                )
-                                + " auc {:.4f}, best auc {:.4f},".format(
-                                    validation_results['roc_auc'],
-                                    best_auc_test
-                                )
-                                + " accuracy {:3.3f} %, best accuracy {:3.3f} %".format(
-                                    validation_results['accuracy'] * 100,
-                                    best_gA_test * 100
-                                )
+                            best_auc_test = validation_results['roc_auc']
+
+                        print(
+                            "Testing at - {}/{} of epoch {},".format(j + 1, nbatches, k)
+                            + " loss {:.6f}, recall {:.4f}, precision {:.4f},".format(
+                                validation_results['loss'],
+                                validation_results['recall'],
+                                validation_results['precision']
                             )
-                        else:
-                            print(
-                                "Testing at - {}/{} of epoch {},".format(j + 1, nbatches, 0)
-                                + " loss {:.6f}, accuracy {:3.3f} %, best {:3.3f} %".format(
-                                    gL_test, gA_test * 100, best_gA_test * 100
-                                )
+                            + " f1 {:.4f}, ap {:.4f},".format(
+                                validation_results['f1'],
+                                validation_results['ap'],
                             )
-                        # Uncomment the line below to print out the total time with overhead
-                        # print("Total test time for this group: {}" \
-                        # .format(time_wrap(use_gpu) - accum_test_time_begin))
-    
-                        if (args.mlperf_logging
-                            and (args.mlperf_acc_threshold > 0)
-                            and (best_gA_test > args.mlperf_acc_threshold)):
-                            print("MLPerf testing accuracy threshold "
-                                  + str(args.mlperf_acc_threshold)
-                                  + " reached, stop training")
-                            break
-    
-                        if (args.mlperf_logging
-                            and (args.mlperf_auc_threshold > 0)
-                            and (best_auc_test > args.mlperf_auc_threshold)):
-                            print("MLPerf testing auc threshold "
-                                  + str(args.mlperf_auc_threshold)
-                                  + " reached, stop training")
-                            break
-    
-                k += 1  # nepochs
+                            + " auc {:.4f}, best auc {:.4f},".format(
+                                validation_results['roc_auc'],
+                                best_auc_test
+                            )
+                            + " accuracy {:3.3f} %, best accuracy {:3.3f} %".format(
+                                validation_results['accuracy'] * 100,
+                                best_gA_test * 100
+                            )
+                        )
+                        if args.verify_auc_only :
+                            sys.exit()
+                    else:
+                        print(
+                            "Testing at - {}/{} of epoch {},".format(j + 1, nbatches, 0)
+                            + " loss {:.6f}, accuracy {:3.3f} %, best {:3.3f} %".format(
+                                gL_test, gA_test * 100, best_gA_test * 100
+                            )
+                        )
+                    # Uncomment the line below to print out the total time with overhead
+                    # print("Total test time for this group: {}" \
+                    # .format(time_wrap(use_gpu) - accum_test_time_begin))
+
+                    if (args.mlperf_logging
+                        and (args.mlperf_acc_threshold > 0)
+                        and (best_gA_test > args.mlperf_acc_threshold)):
+                        print("MLPerf testing accuracy threshold "
+                                + str(args.mlperf_acc_threshold)
+                                + " reached, stop training")
+                        break
+
+                    if (args.mlperf_logging
+                        and (args.mlperf_auc_threshold > 0)
+                        and (best_auc_test > args.mlperf_auc_threshold)):
+                        print("MLPerf testing auc threshold "
+                                + str(args.mlperf_auc_threshold)
+                                + " reached, stop training")
+                        break
+
+            k += 1  # nepochs
 
     # profiling
     if args.enable_profiling:
