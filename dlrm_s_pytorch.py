@@ -479,12 +479,12 @@ class DLRM_Net(nn.Module):
     def load_state_dict(self, state_dict):
         for i in range(len(self.top_l)):
             if hasattr(self.top_l[i], 'weight'):
-                self.top_l[i].weight = torch.nn.Parameter(state_dict["top_l.%d.weight" % i])
-                self.top_l[i].bias = torch.nn.Parameter(state_dict["top_l.%d.bias" % i])
+                self.top_l[i].weight.data.copy_(state_dict["top_l.%d.weight" % i].to(device))
+                self.top_l[i].bias.data.copy_(state_dict["top_l.%d.bias" % i].to(device))
         for i in range(len(self.bot_l)):
             if hasattr(self.bot_l[i], 'weight'):
-                self.bot_l[i].weight = torch.nn.Parameter(state_dict["bot_l.%d.weight" % i])
-                self.bot_l[i].bias = torch.nn.Parameter(state_dict["bot_l.%d.bias" % i])
+                self.bot_l[i].weight.data.copy_(state_dict["bot_l.%d.weight" % i].to(device))
+                self.bot_l[i].bias.data.copy_(state_dict["bot_l.%d.bias" % i].to(device))
         for i in range(len(self.emb_l)):
             dlrm.emb_l[i].weight = torch.nn.Parameter(ld_model["state_dict"]["emb_l.%d.weight" % i])
 
