@@ -14,7 +14,7 @@ ARGS=""
 
 if [[ "$1" == "int8" ]]
 then
-    ARGS="$ARGS --dnnl --jit --int8 --int8-calibration"
+    ARGS="$ARGS --ipex --dnnl --jit --int8 --int8-calibration"
     echo "### running auto_dnnl mode"
 fi
 
