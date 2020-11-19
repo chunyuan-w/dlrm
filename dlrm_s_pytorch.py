@@ -908,12 +908,12 @@ if __name__ == "__main__":
     def int8_calibration(model, data_loader, num_calib_batches):
         conf = ipex.AmpConf(torch.int8)
         with torch.no_grad():
-            with ipex.AutoMixPrecision(conf, running_mode="calibration"):
-                for j, (X, lS_o, lS_i, T) in enumerate(data_loader):
-                    model(X, lS_o, lS_i)
-                    if j == num_calib_batches:
-                        conf.save(args.int8_configuration_dir)
-                        return
+            for j, (X, lS_o, lS_i, T) in enumerate(data_loader):
+                with ipex.AutoMixPrecision(conf, running_mode="calibration"):
+                    model(*input_wrap(X, lS_o, lS_i, use_gpu, device))
+                if j == num_calib_batches:
+                    conf.save(args.int8_configuration_dir)
+                    return
     # training or inference
     best_gA_test = 0
     best_auc_test = 0
@@ -1003,7 +1003,7 @@ if __name__ == "__main__":
     print("time/loss/accuracy (if enabled):")
     if args.share_weight:
         assert args.inference_only
-        if args.ipex:
+        if args.ipex and (args.bf16 or args.int8):
             with ipex.AutoMixPrecision(ipex_conf):
                 run_throughtput_benchmark(dlrm, train_ld)
         else:
@@ -1051,10 +1051,14 @@ if __name__ == "__main__":
                 '''
 
                 # forward pass
-                Z = dlrm(*input_wrap(X, lS_o, lS_i, use_gpu, device))
+                if args.ipex and (args.bf16 or args.int8):
+                    with ipex.AutoMixPrecision(ipex_conf):
+                        Z = dlrm(*input_wrap(X, lS_o, lS_i, use_gpu, device))
+                        E = loss_fn_wrap(Z, T, use_gpu, device)
+                else:
+                    Z = dlrm(*input_wrap(X, lS_o, lS_i, use_gpu, device))
+                    E = loss_fn_wrap(Z, T, use_gpu, device)
 
-                # loss
-                E = loss_fn_wrap(Z, T, use_gpu, device)
                 '''
                 # debug prints
                 print("output and loss")
@@ -1150,7 +1154,7 @@ if __name__ == "__main__":
                         t1_test = time_wrap(use_gpu)
 
                         # forward pass
-                        if args.ipex:
+                        if args.ipex and (args.bf16 or args.int8):
                             with ipex.AutoMixPrecision(ipex_conf):
                                 Z_test = dlrm(*input_wrap(X_test, lS_o_test, lS_i_test, use_gpu, device))
                         else:
