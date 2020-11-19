@@ -23,15 +23,13 @@ CORES=`lscpu | grep Core | awk '{print $4}'`
 numa_cmd="numactl -C 0-$((CORES-1))  -m 0"
 echo "will run on core 0-$((CORES-1)) on socket 0" 
 
-export DATASET_PATH=/home2/dlrm_dataset/dlrm/input
-export WEIGHT_PATH=/home2/dlrm_dataset/dlrm_weight/terabyte_mlperf_official.pt 
 export OMP_NUM_THREADS=$CORES
-$numa_cmd python -u dlrm_s_pytorch.py --inference-only \
+$numa_cmd python -u dlrm_s_pytorch.py \
 --raw-data-file=${DATASET_PATH}/day --processed-data-file=${DATASET_PATH}/terabyte_processed.npz \
---loss-function=bce \
+--loss-function=bce --data-generation=dataset --data-set=terabyte \
 --memory-map --mlperf-bin-loader --round-targets=True --learning-rate=1.0 \
 --arch-mlp-bot=13-512-256-128 --arch-mlp-top=1024-1024-512-256-1 \
---arch-sparse-feature-size=128 --max-ind-range=40000000 \
+--arch-sparse-feature-size=128 --max-ind-range=400000 \
 --numpy-rand-seed=727  --verify-auc-only --inference-only \
 --print-freq=2048 --print-time --mini-batch-size=2048  --test-mini-batch-size=16384 \
 --test-freq=2048 --mlperf-logging \
