@@ -142,7 +142,10 @@ class DLRM_Net(nn.Module):
             m = ln[i + 1]
 
             # construct fully connected operator
-            LL = nn.Linear(int(n), int(m), bias=True)
+            if args.ipex and args.inference_only and i != sigmoid_layer:
+                LL = ipex.LinearRelu(int(n), int(m), bias=True)
+            else:
+                LL = nn.Linear(int(n), int(m), bias=True)
 
             # initialize the weights
             # with torch.no_grad():
@@ -167,6 +170,8 @@ class DLRM_Net(nn.Module):
             if i == sigmoid_layer:
                 layers.append(nn.Sigmoid())
             else:
+                if args.ipex:
+                    continue
                 layers.append(nn.ReLU())
 
         # approach 1: use ModuleList
@@ -193,7 +198,7 @@ class DLRM_Net(nn.Module):
                 EE.embs.weight.data = torch.tensor(W, requires_grad=True)
 
             else:
-                print("create emb", i)
+                # print("create emb", i)
                 EE = nn.EmbeddingBag(n, m, mode="sum", sparse=True)
                 if args.load_model == "":
                     # initialize embeddings
@@ -303,26 +308,31 @@ class DLRM_Net(nn.Module):
 
     def interact_features(self, x, ly):
         if self.arch_interaction_op == "dot":
-            # concatenate dense and sparse features
-            (batch_size, d) = x.shape
-            T = torch.cat([x] + ly, dim=1).view((batch_size, -1, d))
-            # perform a dot product
-            Z = torch.bmm(T, torch.transpose(T, 1, 2))
-            # append dense feature with the interactions (into a row vector)
-            # approach 1: all
-            # Zflat = Z.view((batch_size, -1))
-            # approach 2: unique
-            _, ni, nj = Z.shape
-            # approach 1: tril_indices
-            # offset = 0 if self.arch_interaction_itself else -1
-            # li, lj = torch.tril_indices(ni, nj, offset=offset)
-            # approach 2: custom
-            offset = 1 if self.arch_interaction_itself else 0
-            li = torch.tensor([i for i in range(ni) for j in range(i + offset)])
-            lj = torch.tensor([j for i in range(nj) for j in range(i + offset)])
-            Zflat = Z[:, li, lj]
-            # concatenate dense features and interactions
-            R = torch.cat([x] + [Zflat], dim=1)
+            if args.ipex:
+                T = [x] + ly
+                R = torch.ops.torch_ipex.interaction_forward(T)
+                # R = ipex.interaction(*T)
+            else:
+                # concatenate dense and sparse features
+                (batch_size, d) = x.shape
+                T = torch.cat([x] + ly, dim=1).view((batch_size, -1, d))
+                # perform a dot product
+                Z = torch.bmm(T, torch.transpose(T, 1, 2))
+                # append dense feature with the interactions (into a row vector)
+                # approach 1: all
+                # Zflat = Z.view((batch_size, -1))
+                # approach 2: unique
+                _, ni, nj = Z.shape
+                # approach 1: tril_indices
+                # offset = 0 if self.arch_interaction_itself else -1
+                # li, lj = torch.tril_indices(ni, nj, offset=offset)
+                # approach 2: custom
+                offset = 1 if self.arch_interaction_itself else 0
+                li = torch.tensor([i for i in range(ni) for j in range(i + offset)])
+                lj = torch.tensor([j for i in range(nj) for j in range(i + offset)])
+                Zflat = Z[:, li, lj]
+                # concatenate dense features and interactions
+                R = torch.cat([x] + [Zflat], dim=1)
         elif self.arch_interaction_op == "cat":
             # concatenation features (into a row vector)
             R = torch.cat([x] + ly, dim=1)
@@ -488,6 +498,21 @@ class DLRM_Net(nn.Module):
         for i in range(len(self.emb_l)):
             dlrm.emb_l[i].weight = torch.nn.Parameter(ld_model["state_dict"]["emb_l.%d.weight" % i])
 
+    def eval(self):
+        for m in self.top_l:
+            if hasattr(m, 'weight'):
+                m.weight.requires_grad = False
+            if hasattr(m, 'bias'):
+                m.requires_grad = False
+        for m in self.bot_l:
+            if hasattr(m, 'weight'):
+                m.weight.requires_grad = False
+            if hasattr(m, 'bias'):
+                m.requires_grad = False
+        for m in self.emb_l:
+            if hasattr(m, 'weight'):
+                m.weight.requires_grad = False
+
 if __name__ == "__main__":
     ### import packages ###
     import sys
@@ -619,6 +644,7 @@ if __name__ == "__main__":
                 ipex_conf = ipex.AmpConf(torch.int8, args.int8_configuration_dir)
         else:
             ipex_conf = None
+        ipex.core.set_execution_mode(train = not args.inference_only)
 
         # jit path only enabled for inference
         if args.jit and args.inference_only:
@@ -838,7 +864,7 @@ if __name__ == "__main__":
 
     if args.ipex:
         dlrm = dlrm.to(device)
-        print(dlrm)
+        # print(dlrm)
 
     # specify the loss function
     if args.loss_function == "mse":
@@ -898,12 +924,15 @@ if __name__ == "__main__":
             bench.add_input(*input_wrap(X, lS_o, lS_i, use_gpu, device))
             if j == 1000: 
                 break
-        stats = bench.benchmark(
-            num_calling_threads=args.num_instance,
-            num_warmup_iters=100,
-            num_iters=1000 * args.num_instance,
-        )
+        with torch.autograd.profiler.profile(args.enable_profiling, use_gpu) as prof:
+            stats = bench.benchmark(
+                num_calling_threads=args.num_instance,
+                num_warmup_iters=100,
+                num_iters=1000 * args.num_instance,
+            )
         print(stats)
+        if args.enable_profiling:
+            print(prof.key_averages().table(sort_by="self_cpu_time_total"))
 
     def int8_calibration(model, data_loader, num_calib_batches):
         conf = ipex.AmpConf(torch.int8)
@@ -914,6 +943,7 @@ if __name__ == "__main__":
                 if j == num_calib_batches:
                     conf.save(args.int8_configuration_dir)
                     return
+
     # training or inference
     best_gA_test = 0
     best_auc_test = 0
@@ -987,22 +1017,37 @@ if __name__ == "__main__":
         )
 
     if args.inference_only:
-        torch.set_grad_enabled(False)  
+        torch.set_grad_enabled(False) 
+        dlrm.eval()
 
     if args.jit:
         for j, (X, lS_o, lS_i, T) in enumerate(train_ld):
+            print("=====================trace begin")
             dlrm = torch.jit.trace(dlrm, input_wrap(X, lS_o, lS_i, use_gpu, device), check_trace=False)
+            print("============================trace end")
             break
 
     if args.int8_calibration:
         assert args.int8 and args.inference_only, "int8 type only support inference, only using int8 type needs to int8_calibration"
         int8_calibration(dlrm, test_ld, num_calib_batches=8)
         print("do int8 calibration done")
+        sys.exit()
         ipex_conf = ipex.AmpConf(torch.int8, args.int8_configuration_dir)
 
     print("time/loss/accuracy (if enabled):")
     if args.share_weight:
         assert args.inference_only
+        if args.ipex:
+            ## prepack and reorder for mix-precision if needed
+            for j, (X, lS_o, lS_i, T) in enumerate(train_ld):
+                if args.bf16 or args.int8:
+                    with ipex.AutoMixPrecision(ipex_conf):
+                        Z = dlrm(*input_wrap(X, lS_o, lS_i, use_gpu, device))
+                else:
+                    Z = dlrm(*input_wrap(X, lS_o, lS_i, use_gpu, device))
+                break
+        print("===========================prepack and dtype convert done")
+
         if args.ipex and (args.bf16 or args.int8):
             with ipex.AutoMixPrecision(ipex_conf):
                 run_throughtput_benchmark(dlrm, train_ld)
@@ -1321,7 +1366,7 @@ if __name__ == "__main__":
         with open("dlrm_s_pytorch.prof", "w") as prof_f:
             prof_f.write(prof.key_averages().table(sort_by="cpu_time_total"))
             prof.export_chrome_trace("./dlrm_s_pytorch.json")
-        # print(prof.key_averages().table(sort_by="cpu_time_total"))
+        print(prof.key_averages().table(sort_by="self_cpu_time_total"))
 
     # plot compute graph
     if args.plot_compute_graph:
