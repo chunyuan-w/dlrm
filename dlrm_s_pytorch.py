@@ -308,7 +308,8 @@ class DLRM_Net(nn.Module):
 
     def interact_features(self, x, ly):
         if self.arch_interaction_op == "dot":
-            if args.ipex:
+            if args.ipex and False:
+            # will not use ipex fused interation now 
                 T = [x] + ly
                 R = torch.ops.torch_ipex.interaction_forward(T)
                 # R = ipex.interaction(*T)
