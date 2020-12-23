@@ -487,14 +487,20 @@ class DLRM_Net(nn.Module):
         return z0
 
     def load_state_dict(self, state_dict):
+        if args.ipex and args.inference_only:
+        # for this case we use manully fused linear+relu, the layer index should be half of the index in
+        # official trained weight
+            scale = 2
+        else:
+            scale = 1
         for i in range(len(self.top_l)):
             if hasattr(self.top_l[i], 'weight'):
-                self.top_l[i].weight.data.copy_(state_dict["top_l.%d.weight" % i].to(device))
-                self.top_l[i].bias.data.copy_(state_dict["top_l.%d.bias" % i].to(device))
+                self.top_l[i].weight.data.copy_(state_dict["top_l.%d.weight" % (scale*i)].to(device))
+                self.top_l[i].bias.data.copy_(state_dict["top_l.%d.bias" % (scale*i)].to(device))
         for i in range(len(self.bot_l)):
             if hasattr(self.bot_l[i], 'weight'):
-                self.bot_l[i].weight.data.copy_(state_dict["bot_l.%d.weight" % i].to(device))
-                self.bot_l[i].bias.data.copy_(state_dict["bot_l.%d.bias" % i].to(device))
+                self.bot_l[i].weight.data.copy_(state_dict["bot_l.%d.weight" % (scale*i)].to(device))
+                self.bot_l[i].bias.data.copy_(state_dict["bot_l.%d.bias" % (scale*i)].to(device))
         for i in range(len(self.emb_l)):
             dlrm.emb_l[i].weight = torch.nn.Parameter(ld_model["state_dict"]["emb_l.%d.weight" % i])
 
@@ -1031,7 +1037,6 @@ if __name__ == "__main__":
         assert args.int8 and args.inference_only, "int8 type only support inference, only using int8 type needs to int8_calibration"
         int8_calibration(dlrm, test_ld, num_calib_batches=8)
         print("do int8 calibration done")
-        sys.exit()
         ipex_conf = ipex.AmpConf(torch.int8, args.int8_configuration_dir)
 
     print("time/loss/accuracy (if enabled):")
