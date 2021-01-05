@@ -308,11 +308,9 @@ class DLRM_Net(nn.Module):
 
     def interact_features(self, x, ly):
         if self.arch_interaction_op == "dot":
-            if args.ipex and False:
-            # will not use ipex fused interation now 
+            if args.ipex:
                 T = [x] + ly
-                R = torch.ops.torch_ipex.interaction_forward(T)
-                # R = ipex.interaction(*T)
+                R = ipex.interaction(*T)
             else:
                 # concatenate dense and sparse features
                 (batch_size, d) = x.shape
