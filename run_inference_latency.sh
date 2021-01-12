@@ -19,6 +19,12 @@ then
     echo "### running auto_dnnl mode"
 fi
 
+if [[ "$2" == "int8" ]]
+then
+    ARGS="$ARGS --int8 --int8-calibration"
+    echo "### running int8 mode"
+fi
+
 
 CORES=`lscpu | grep Core | awk '{print $4}'`
 # use first socket
