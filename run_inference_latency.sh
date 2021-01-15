@@ -7,7 +7,7 @@
 ###############################################################################
 export KMP_AFFINITY="granularity=fine,compact,1,0"
 export KMP_BLOCKTIME=1
-export LD_PRELOAD=${CONDA_PREFIX}/lib/libjemalloc.so:${CONDA_PREFIX}/lib/libiomp5.so
+export LD_PRELOAD="${CONDA_PREFIX}/lib/libiomp5.so:$LDPRELOAD"
 export DNNL_PRIMITIVE_CACHE_CAPACITY=1024
 export KMP_SETTINGS=1
 
