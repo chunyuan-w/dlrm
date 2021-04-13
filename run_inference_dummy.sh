@@ -36,8 +36,7 @@ $numa_cmd python -u dlrm_s_pytorch.py \
 --loss-function=bce --data-generation=dataset --data-set=terabyte \
 --memory-map --mlperf-bin-loader --round-targets=True --learning-rate=1.0 \
 --arch-mlp-bot=13-512-256-128 --arch-mlp-top=1024-1024-512-256-1 \
---arch-sparse-feature-size=128 --max-ind-range=40000000 \
+--arch-sparse-feature-size=128 --max-ind-range=40 \
 --numpy-rand-seed=727  --verify-auc-only --inference-only \
 --print-freq=2048 --print-time --mini-batch-size=2048  --test-mini-batch-size=16384 \
---test-freq=2048 --mlperf-logging \
---load-model=${WEIGHT_PATH} $ARGS
+--test-freq=2048 --mlperf-logging $ARGS

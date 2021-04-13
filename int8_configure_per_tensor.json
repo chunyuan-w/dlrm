@@ -1,0 +1,466 @@
+[
+    {
+        "id": 0,
+        "name": "linear",
+        "algorithm": "min_max",
+        "weight_granularity": "per_tensor",
+        "inputs_scale": [
+            0.11256387829780579
+        ],
+        "outputs_scale": [
+            0.15773284435272217
+        ],
+        "weight_scale": [
+            0.02403128892183304
+        ],
+        "inputs_uint8_used": [
+            false
+        ],
+        "outputs_uint8_used": [
+            false
+        ],
+        "quantized": true,
+        "pre_quantized": true,
+        "post_quantized": false,
+        "inputs_flow": [
+            "linear.0.input"
+        ],
+        "outputs_flow": [
+            "linear.0.output"
+        ]
+    },
+    {
+        "id": 1,
+        "name": "relu",
+        "algorithm": "min_max",
+        "weight_granularity": "per_tensor",
+        "inputs_scale": [
+            0.15773284435272217
+        ],
+        "outputs_scale": [
+            0.15773284435272217
+        ],
+        "weight_scale": [],
+        "inputs_uint8_used": [
+            false
+        ],
+        "outputs_uint8_used": [
+            false
+        ],
+        "quantized": true,
+        "pre_quantized": false,
+        "post_quantized": false,
+        "inputs_flow": [
+            "linear.0.output"
+        ],
+        "outputs_flow": [
+            "relu.1.output"
+        ]
+    },
+    {
+        "id": 2,
+        "name": "linear",
+        "algorithm": "min_max",
+        "weight_granularity": "per_tensor",
+        "inputs_scale": [
+            0.15773284435272217
+        ],
+        "outputs_scale": [
+            0.40175604820251465
+        ],
+        "weight_scale": [
+            0.015084123238921165
+        ],
+        "inputs_uint8_used": [
+            false
+        ],
+        "outputs_uint8_used": [
+            false
+        ],
+        "quantized": true,
+        "pre_quantized": true,
+        "post_quantized": false,
+        "inputs_flow": [
+            "relu.1.output"
+        ],
+        "outputs_flow": [
+            "linear.2.output"
+        ]
+    },
+    {
+        "id": 3,
+        "name": "relu",
+        "algorithm": "min_max",
+        "weight_granularity": "per_tensor",
+        "inputs_scale": [
+            0.40175604820251465
+        ],
+        "outputs_scale": [
+            0.062094490975141525
+        ],
+        "weight_scale": [],
+        "inputs_uint8_used": [
+            false
+        ],
+        "outputs_uint8_used": [
+            false
+        ],
+        "quantized": true,
+        "pre_quantized": false,
+        "post_quantized": false,
+        "inputs_flow": [
+            "linear.2.output"
+        ],
+        "outputs_flow": [
+            "relu.3.output"
+        ]
+    },
+    {
+        "id": 4,
+        "name": "linear",
+        "algorithm": "min_max",
+        "weight_granularity": "per_tensor",
+        "inputs_scale": [
+            0.062094490975141525
+        ],
+        "outputs_scale": [
+            0.06753738969564438
+        ],
+        "weight_scale": [
+            0.007457201834768057
+        ],
+        "inputs_uint8_used": [
+            false
+        ],
+        "outputs_uint8_used": [
+            false
+        ],
+        "quantized": true,
+        "pre_quantized": true,
+        "post_quantized": false,
+        "inputs_flow": [
+            "relu.3.output"
+        ],
+        "outputs_flow": [
+            "linear.4.output"
+        ]
+    },
+    {
+        "id": 5,
+        "name": "relu",
+        "algorithm": "min_max",
+        "weight_granularity": "per_tensor",
+        "inputs_scale": [
+            0.06753738969564438
+        ],
+        "outputs_scale": [
+            0.03773811459541321
+        ],
+        "weight_scale": [],
+        "inputs_uint8_used": [
+            false
+        ],
+        "outputs_uint8_used": [
+            false
+        ],
+        "quantized": true,
+        "pre_quantized": false,
+        "post_quantized": true,
+        "inputs_flow": [
+            "linear.4.output"
+        ],
+        "outputs_flow": [
+            "relu.5.output"
+        ]
+    },
+    {
+        "id": 6,
+        "name": "linear",
+        "algorithm": "min_max",
+        "weight_granularity": "per_tensor",
+        "inputs_scale": [
+            0.03773811459541321
+        ],
+        "outputs_scale": [
+            0.043745554983615875
+        ],
+        "weight_scale": [
+            0.011317935772240162
+        ],
+        "inputs_uint8_used": [
+            false
+        ],
+        "outputs_uint8_used": [
+            false
+        ],
+        "quantized": true,
+        "pre_quantized": true,
+        "post_quantized": false,
+        "inputs_flow": [
+            "linear.6.input"
+        ],
+        "outputs_flow": [
+            "linear.6.output"
+        ]
+    },
+    {
+        "id": 7,
+        "name": "relu",
+        "algorithm": "min_max",
+        "weight_granularity": "per_tensor",
+        "inputs_scale": [
+            0.043745554983615875
+        ],
+        "outputs_scale": [
+            0.03699411451816559
+        ],
+        "weight_scale": [],
+        "inputs_uint8_used": [
+            false
+        ],
+        "outputs_uint8_used": [
+            false
+        ],
+        "quantized": true,
+        "pre_quantized": false,
+        "post_quantized": false,
+        "inputs_flow": [
+            "linear.6.output"
+        ],
+        "outputs_flow": [
+            "relu.7.output"
+        ]
+    },
+    {
+        "id": 8,
+        "name": "linear",
+        "algorithm": "min_max",
+        "weight_granularity": "per_tensor",
+        "inputs_scale": [
+            0.03699411451816559
+        ],
+        "outputs_scale": [
+            0.035414546728134155
+        ],
+        "weight_scale": [
+            0.002876817248761654
+        ],
+        "inputs_uint8_used": [
+            false
+        ],
+        "outputs_uint8_used": [
+            false
+        ],
+        "quantized": true,
+        "pre_quantized": true,
+        "post_quantized": false,
+        "inputs_flow": [
+            "relu.7.output"
+        ],
+        "outputs_flow": [
+            "linear.8.output"
+        ]
+    },
+    {
+        "id": 9,
+        "name": "relu",
+        "algorithm": "min_max",
+        "weight_granularity": "per_tensor",
+        "inputs_scale": [
+            0.035414546728134155
+        ],
+        "outputs_scale": [
+            0.03492220491170883
+        ],
+        "weight_scale": [],
+        "inputs_uint8_used": [
+            false
+        ],
+        "outputs_uint8_used": [
+            false
+        ],
+        "quantized": true,
+        "pre_quantized": false,
+        "post_quantized": false,
+        "inputs_flow": [
+            "linear.8.output"
+        ],
+        "outputs_flow": [
+            "relu.9.output"
+        ]
+    },
+    {
+        "id": 10,
+        "name": "linear",
+        "algorithm": "min_max",
+        "weight_granularity": "per_tensor",
+        "inputs_scale": [
+            0.03492220491170883
+        ],
+        "outputs_scale": [
+            0.05660368129611015
+        ],
+        "weight_scale": [
+            0.00147104577627033
+        ],
+        "inputs_uint8_used": [
+            false
+        ],
+        "outputs_uint8_used": [
+            false
+        ],
+        "quantized": true,
+        "pre_quantized": true,
+        "post_quantized": false,
+        "inputs_flow": [
+            "relu.9.output"
+        ],
+        "outputs_flow": [
+            "linear.10.output"
+        ]
+    },
+    {
+        "id": 11,
+        "name": "relu",
+        "algorithm": "min_max",
+        "weight_granularity": "per_tensor",
+        "inputs_scale": [
+            0.05660368129611015
+        ],
+        "outputs_scale": [
+            0.03151395171880722
+        ],
+        "weight_scale": [],
+        "inputs_uint8_used": [
+            false
+        ],
+        "outputs_uint8_used": [
+            false
+        ],
+        "quantized": true,
+        "pre_quantized": false,
+        "post_quantized": false,
+        "inputs_flow": [
+            "linear.10.output"
+        ],
+        "outputs_flow": [
+            "relu.11.output"
+        ]
+    },
+    {
+        "id": 12,
+        "name": "linear",
+        "algorithm": "min_max",
+        "weight_granularity": "per_tensor",
+        "inputs_scale": [
+            0.03151395171880722
+        ],
+        "outputs_scale": [
+            0.029774684458971024
+        ],
+        "weight_scale": [
+            0.0021139218006283045
+        ],
+        "inputs_uint8_used": [
+            false
+        ],
+        "outputs_uint8_used": [
+            false
+        ],
+        "quantized": true,
+        "pre_quantized": true,
+        "post_quantized": false,
+        "inputs_flow": [
+            "relu.11.output"
+        ],
+        "outputs_flow": [
+            "linear.12.output"
+        ]
+    },
+    {
+        "id": 13,
+        "name": "relu",
+        "algorithm": "min_max",
+        "weight_granularity": "per_tensor",
+        "inputs_scale": [
+            0.029774684458971024
+        ],
+        "outputs_scale": [
+            0.029774684458971024
+        ],
+        "weight_scale": [],
+        "inputs_uint8_used": [
+            false
+        ],
+        "outputs_uint8_used": [
+            false
+        ],
+        "quantized": true,
+        "pre_quantized": false,
+        "post_quantized": false,
+        "inputs_flow": [
+            "linear.12.output"
+        ],
+        "outputs_flow": [
+            "relu.13.output"
+        ]
+    },
+    {
+        "id": 14,
+        "name": "linear",
+        "algorithm": "min_max",
+        "weight_granularity": "per_tensor",
+        "inputs_scale": [
+            0.029774684458971024
+        ],
+        "outputs_scale": [
+            0.1002197265625
+        ],
+        "weight_scale": [
+            0.00500689260661602
+        ],
+        "inputs_uint8_used": [
+            false
+        ],
+        "outputs_uint8_used": [
+            false
+        ],
+        "quantized": true,
+        "pre_quantized": true,
+        "post_quantized": false,
+        "inputs_flow": [
+            "relu.13.output"
+        ],
+        "outputs_flow": [
+            "linear.14.output"
+        ]
+    },
+    {
+        "id": 15,
+        "name": "sigmoid",
+        "algorithm": "min_max",
+        "weight_granularity": "per_tensor",
+        "inputs_scale": [
+            0.1002197265625
+        ],
+        "outputs_scale": [
+            0.007309869397431612
+        ],
+        "weight_scale": [],
+        "inputs_uint8_used": [
+            false
+        ],
+        "outputs_uint8_used": [
+            false
+        ],
+        "quantized": true,
+        "pre_quantized": false,
+        "post_quantized": true,
+        "inputs_flow": [
+            "linear.14.output"
+        ],
+        "outputs_flow": [
+            "sigmoid.15.output"
+        ]
+    }
+]

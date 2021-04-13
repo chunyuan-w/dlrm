@@ -142,7 +142,7 @@ class DLRM_Net(nn.Module):
             m = ln[i + 1]
 
             # construct fully connected operator
-            if args.ipex and args.inference_only and i != sigmoid_layer:
+            if args.ipex and args.inference_only and i != sigmoid_layer and False:
                 LL = ipex.LinearRelu(int(n), int(m), bias=True)
             else:
                 LL = nn.Linear(int(n), int(m), bias=True)
@@ -170,7 +170,7 @@ class DLRM_Net(nn.Module):
             if i == sigmoid_layer:
                 layers.append(nn.Sigmoid())
             else:
-                if args.ipex:
+                if args.ipex and False:
                     continue
                 layers.append(nn.ReLU())
 
@@ -308,7 +308,7 @@ class DLRM_Net(nn.Module):
 
     def interact_features(self, x, ly):
         if self.arch_interaction_op == "dot":
-            if args.ipex:
+            if args.ipex and False:
                 T = [x] + ly
                 R = ipex.interaction(*T)
             else:
@@ -486,7 +486,7 @@ class DLRM_Net(nn.Module):
         return z0
 
     def load_state_dict(self, state_dict):
-        if args.ipex and args.inference_only:
+        if args.ipex and args.inference_only and False:
         # for this case we use manully fused linear+relu, the layer index should be half of the index in
         # official trained weight
             scale = 2
@@ -620,9 +620,11 @@ if __name__ == "__main__":
                         help='enable ipex mix precision')
     parser.add_argument('--int8', action='store_true', default=False,
                         help='enable ipex mix precision')
+    parser.add_argument('--llga', action='store_true', default=False,
+                        help='enable llga')
     parser.add_argument('--int8-calibration', action='store_true', default=False,
                         help='enable ipex mix precision')
-    parser.add_argument('--int8-configuration-dir', default='int8_configure.json', type=str, metavar='PATH',
+    parser.add_argument('--int8-configuration-dir', default='/home/chunyuan/code/llga-code/dlrm/int8_configure_test.json', type=str, metavar='PATH',
                        help = 'path to int8 configures, default file name is configure.json')
     args = parser.parse_args()
 
@@ -637,25 +639,7 @@ if __name__ == "__main__":
 
     if args.ipex:
         import intel_pytorch_extension as ipex
-        if args.dnnl:
-            ipex.core.enable_auto_dnnl()
-        else:
-            ipex.core.disable_auto_dnnl()
-        if args.bf16:
-            ipex_conf = ipex.AmpConf(torch.bfloat16, training=not args.inference_only)
-        elif args.int8:
-            import os
-            if os.path.exists(args.int8_configuration_dir) and os.stat(args.int8_configuration_dir).st_size != 0:
-                ipex_conf = ipex.AmpConf(torch.int8, args.int8_configuration_dir)
-        else:
-            ipex_conf = None
-        ipex.core.set_execution_mode(train = not args.inference_only)
 
-        # jit path only enabled for inference
-        if args.jit and args.inference_only:
-            ipex.core.enable_jit_opt()
-        else:
-            ipex.core.disable_jit_opt()
 
     if (args.test_mini_batch_size < 0):
         # if the parameter is not set, use the training batch size
@@ -671,8 +655,6 @@ if __name__ == "__main__":
         device = torch.device("cuda", 0)
         ngpus = torch.cuda.device_count()  # 1
         print("Using {} GPU(s)...".format(ngpus))
-    elif args.ipex:
-        device = ipex.DEVICE
     else:
         device = torch.device("cpu")
         print("Using CPU...")
@@ -867,9 +849,6 @@ if __name__ == "__main__":
         if dlrm.ndevices > 1:
             dlrm.emb_l = dlrm.create_emb(m_spa, ln_emb)
 
-    if args.ipex:
-        dlrm = dlrm.to(device)
-        # print(dlrm)
 
     # specify the loss function
     if args.loss_function == "mse":
@@ -895,7 +874,7 @@ if __name__ == "__main__":
         return time.time()
 
     def input_wrap(X, lS_o, lS_i, use_gpu, device):
-        if use_gpu or args.ipex:
+        if use_gpu:
             lS_i = [S_i.to(device) for S_i in lS_i] if isinstance(lS_i, list) \
                 else lS_i.to(device)
             lS_o = [S_o.to(device) for S_o in lS_o] if isinstance(lS_o, list) \
@@ -905,12 +884,12 @@ if __name__ == "__main__":
 
     def loss_fn_wrap(Z, T, use_gpu, device):
         if args.loss_function == "mse" or args.loss_function == "bce":
-            if use_gpu or args.ipex:
+            if use_gpu:
                 return loss_fn(Z, T.to(device))
             else:
                 return loss_fn(Z, T)
         elif args.loss_function == "wbce":
-            if use_gpu or args.ipex:
+            if use_gpu:
                 loss_ws_ = loss_ws[T.data.view(-1).long()].view_as(T).to(device)
                 loss_fn_ = loss_fn(Z, T.to(device))
             else:
@@ -940,10 +919,11 @@ if __name__ == "__main__":
             print(prof.key_averages().table(sort_by="self_cpu_time_total"))
 
     def int8_calibration(model, data_loader, num_calib_batches):
-        conf = ipex.AmpConf(torch.int8)
+        # conf = ipex.AmpConf(torch.int8)
+        conf = ipex.AmpConf(torch.int8, args.int8_configuration_dir)
         with torch.no_grad():
             for j, (X, lS_o, lS_i, T) in enumerate(data_loader):
-                with ipex.AutoMixPrecision(conf, running_mode="calibration"):
+                with ipex.amp.calibrate():
                     model(*input_wrap(X, lS_o, lS_i, use_gpu, device))
                 if j == num_calib_batches:
                     conf.save(args.int8_configuration_dir)
@@ -1025,18 +1005,46 @@ if __name__ == "__main__":
         torch.set_grad_enabled(False) 
         dlrm.eval()
 
-    if args.jit:
-        for j, (X, lS_o, lS_i, T) in enumerate(train_ld):
-            print("=====================trace begin")
-            dlrm = torch.jit.trace(dlrm, input_wrap(X, lS_o, lS_i, use_gpu, device), check_trace=False)
-            print("============================trace end")
-            break
-
     if args.int8_calibration:
-        assert args.int8 and args.inference_only, "int8 type only support inference, only using int8 type needs to int8_calibration"
+        # assert args.int8 and args.inference_only, "int8 type only support inference, only using int8 type needs to int8_calibration"
         int8_calibration(dlrm, test_ld, num_calib_batches=8)
         print("do int8 calibration done")
         ipex_conf = ipex.AmpConf(torch.int8, args.int8_configuration_dir)
+
+    if args.jit:
+        dlrm.eval()
+
+        torch._C._jit_set_profiling_mode(False)
+        torch._C._jit_set_profiling_executor(False)
+
+        # disable llga during the preparation of the JIT model
+        ipex.core._jit_set_llga_enabled(False)
+
+        with torch.no_grad():
+            for j, (X, lS_o, lS_i, T) in enumerate(train_ld):
+                print("=====================trace begin")
+                conf = ipex.AmpConf(torch.int8, args.int8_configuration_dir)
+                with torch.no_grad(), ipex.amp.autocast(enabled=True, configure=conf) :
+                    dlrm = torch.jit.trace(dlrm, input_wrap(X, lS_o, lS_i, use_gpu, device), check_trace=False)
+                print("============================trace end")
+                
+                if args.llga:
+                    # freeze the module
+                    dlrm = torch.jit._recursive.wrap_cpp_module(torch._C._freeze_module(dlrm._c, preserveParameters=True))
+
+                    to_save = dlrm.graph
+                    print("ipex graph")
+                    print(dlrm.graph)
+                    # draw(to_save).render("dlrm_ipex")
+
+                    # apply llga optimization pass
+                    ipex.core._jit_llga_fuser(dlrm.graph)
+                    print("llga graph")
+                    print(dlrm.graph)
+                    # draw(dlrm.graph).render('dlrm_llga')
+                    print("============================done llga")
+                
+                break
 
     print("time/loss/accuracy (if enabled):")
     if args.share_weight:
@@ -1059,7 +1067,7 @@ if __name__ == "__main__":
             run_throughtput_benchmark(dlrm, train_ld)
         sys.exit()
 
-    with torch.autograd.profiler.profile(args.enable_profiling, use_gpu) as prof:
+    with torch.autograd.profiler.profile(args.enable_profiling) as prof:
         while k < args.nepochs:
             if k < skip_upto_epoch:
                 continue
@@ -1100,7 +1108,7 @@ if __name__ == "__main__":
                 '''
 
                 # forward pass
-                if args.ipex and (args.bf16 or args.int8):
+                if args.ipex and (args.bf16 or args.int8) and False:
                     with ipex.AutoMixPrecision(ipex_conf):
                         Z = dlrm(*input_wrap(X, lS_o, lS_i, use_gpu, device))
                         E = loss_fn_wrap(Z, T, use_gpu, device)
