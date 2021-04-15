@@ -1007,7 +1007,7 @@ if __name__ == "__main__":
 
     if args.int8_calibration:
         # assert args.int8 and args.inference_only, "int8 type only support inference, only using int8 type needs to int8_calibration"
-        int8_calibration(dlrm, test_ld, num_calib_batches=8)
+        # int8_calibration(dlrm, test_ld, num_calib_batches=8)
         print("do int8 calibration done")
         ipex_conf = ipex.AmpConf(torch.int8, args.int8_configuration_dir)
 
@@ -1017,8 +1017,8 @@ if __name__ == "__main__":
         torch._C._jit_set_profiling_mode(False)
         torch._C._jit_set_profiling_executor(False)
 
-        # disable llga during the preparation of the JIT model
-        ipex.core._jit_set_llga_enabled(False)
+        # disable IPEX JIT optimization
+        ipex.core.disable_jit_opt()
 
         with torch.no_grad():
             for j, (X, lS_o, lS_i, T) in enumerate(train_ld):
