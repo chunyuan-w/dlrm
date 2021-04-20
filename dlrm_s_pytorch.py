@@ -624,7 +624,7 @@ if __name__ == "__main__":
                         help='enable llga')
     parser.add_argument('--int8-calibration', action='store_true', default=False,
                         help='enable ipex mix precision')
-    parser.add_argument('--int8-configuration-dir', default='/home/chunyuan/code/llga-code/dlrm/configure_per_channel_0.80004.json', type=str, metavar='PATH',
+    parser.add_argument('--int8-configuration-dir', default='/home/chunyuan/code/llga-code/dlrm/configure_per_channel_asym_0.8019.json', type=str, metavar='PATH',
                        help = 'path to int8 configures, default file name is configure.json')
     args = parser.parse_args()
 
